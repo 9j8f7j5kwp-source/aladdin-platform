@@ -1,0 +1,158 @@
+# GPU-Accelerated Risk Engine Advanced Dockerfile
+# Multi-stage build for C++/CUDA + Julia risk analytics
+
+# ============================================
+# Stage 1: CUDA Build Environment
+# ============================================
+FROM nvidia/cuda:12.0.0-devel-ubuntu22.04 AS cuda-builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    git \
+    wget \
+    pkg-config \
+    libssl-dev \
+    libzmq3-dev \
+    protobuf-compiler \
+    libprotobuf-dev \
+    grpc++ \
+    libgrpc++-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install cuBLAS, cuRAND, cuSOLVER
+RUN apt-get update && apt-get install -y \
+    libcublas-12-0 \
+    libcublas-dev-12-0 \
+    libcurand-12-0 \
+    libcurand-dev-12-0 \
+    libcusolver-12-0 \
+    libcusolver-dev-12-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Copy C++ source code
+COPY cpp/ /build/cpp/
+COPY proto/ /build/proto/
+
+# Build gRPC proto files
+WORKDIR /build/proto
+RUN protoc --cpp_out=../cpp/generated \
+           --grpc_out=../cpp/generated \
+           --plugin=protoc-gen-grpc=/usr/bin/grpc_cpp_plugin \
+           risk_service.proto ccr_service.proto
+
+# Build C++/CUDA application
+WORKDIR /build/cpp
+RUN mkdir -p build && cd build && \
+    cmake -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_CUDA_ARCHITECTURES=\"70;75;80;86\" \
+          .. && \
+    make -j$(nproc)
+
+# ============================================
+# Stage 2: Julia Environment
+# ============================================
+FROM julia:1.9.3 AS julia-builder
+
+WORKDIR /build/julia
+
+# Copy Julia project files
+COPY julia/Project.toml julia/Manifest.toml* ./
+
+# Precompile Julia dependencies
+RUN julia --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
+
+# Copy Julia source code
+COPY julia/src/ ./src/
+COPY julia/test/ ./test/
+
+# Run Julia tests
+RUN julia --project=. -e 'using Pkg; Pkg.test()'
+
+# ============================================
+# Stage 3: Runtime Image
+# ============================================
+FROM nvidia/cuda:12.0.0-runtime-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+LABEL maintainer=\"Aladdin Platform Team\"
+LABEL description=\"GPU-Accelerated Risk Engine Advanced - C++/CUDA + Julia\"
+LABEL version=\"3.0.0\"
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    libgomp1 \
+    libzmq5 \
+    libprotobuf23 \
+    libgrpc++1.45 \
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install CUDA runtime libraries
+RUN apt-get update && apt-get install -y \
+    libcublas-12-0 \
+    libcurand-12-0 \
+    libcusolver-12-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Julia runtime
+RUN curl -fsSL https://julialang-s3.julialang.org/bin/linux/x64/1.9/julia-1.9.3-linux-x86_64.tar.gz | \
+    tar -xz -C /opt && \
+    ln -s /opt/julia-1.9.3/bin/julia /usr/local/bin/julia
+
+# Create app user
+RUN useradd -m -u 1000 -s /bin/bash riskengine
+
+WORKDIR /app
+
+# Copy C++ binaries from builder
+COPY --from=cuda-builder /build/cpp/build/risk_engine_advanced /app/bin/
+COPY --from=cuda-builder /build/cpp/build/lib*.so /app/lib/
+
+# Copy Julia environment from builder
+COPY --from=julia-builder /build/julia /app/julia
+
+# Copy configuration files
+COPY config/ /app/config/
+
+# Copy scripts
+COPY scripts/ /app/scripts/
+RUN chmod +x /app/scripts/*.sh
+
+# Set environment variables
+ENV LD_LIBRARY_PATH=/app/lib:/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+ENV PATH=/app/bin:$PATH
+ENV JULIA_PROJECT=/app/julia
+ENV CUDA_VISIBLE_DEVICES=all
+ENV NVIDIA_VISIBLE_DEVICES=all
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+# GPU optimization settings
+ENV CUDA_DEVICE_ORDER=PCI_BUS_ID
+ENV CUDA_CACHE_MAXSIZE=2147483648
+ENV CUDA_FORCE_PTX_JIT=1
+
+# Application settings
+ENV RISK_ENGINE_PORT=50052
+ENV RISK_ENGINE_WORKERS=4
+ENV RISK_ENGINE_GPU_MEMORY_FRACTION=0.8
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:${RISK_ENGINE_PORT}/health || exit 1
+
+# Expose gRPC port
+EXPOSE 50052
+
+# Switch to app user
+USER riskengine
+
+# Default command
+CMD [\"/app/bin/risk_engine_advanced\", \"--config=/app/config/gpu_config.yaml\"]

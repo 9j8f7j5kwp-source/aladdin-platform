@@ -1,0 +1,2 @@
+# Exclude go.sum to allow Docker build to generate it
+go.sum

@@ -1,0 +1,102 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository }}
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service:
+          - portfolio-service
+          - risk-engine
+          - oms-service
+          - market-data-service
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Set up Java
+      uses: actions/setup-java@v3
+      with:
+        java-version: '21'
+        distribution: 'temurin'
+    
+    - name: Build service
+      run: |
+        cd services/${{ matrix.service }}
+        if [ -f "build.gradle" ]; then
+          ./gradlew build
+        elif [ -f "pom.xml" ]; then
+          mvn clean package
+        fi
+    
+    - name: Run tests
+      run: |
+        cd services/${{ matrix.service }}
+        if [ -f "build.gradle" ]; then
+          ./gradlew test
+        elif [ -f "pom.xml" ]; then
+          mvn test
+        fi
+
+  build-docker-images:
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    strategy:
+      matrix:
+        service:
+          - portfolio-service
+          - risk-engine
+          - oms-service
+          - market-data-service
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Log in to Container Registry
+      uses: docker/login-action@v2
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v4
+      with:
+        context: ./services/${{ matrix.service }}
+        push: true
+        tags: |
+          ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:latest
+          ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:${{ github.sha }}
+
+  deploy-to-staging:
+    needs: build-docker-images
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Setup kubectl
+      uses: azure/setup-kubectl@v3
+    
+    - name: Deploy to staging
+      run: |
+        echo "Deploying to staging environment"
+        # kubectl apply -f infra/k8s/base/
+        # kubectl apply -f infra/k8s/database/postgres/
+        # kubectl apply -f infra/k8s/messaging/kafka/

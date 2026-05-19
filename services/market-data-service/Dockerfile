@@ -6,12 +6,10 @@ WORKDIR /app
 # Install build dependencies
 RUN apk add --no-cache git gcc musl-dev
 
-# Copy go mod files
-COPY go.mod ./
-RUN go mod download
 
 # Copy source code
 COPY . .
+RUN rm -f go.sum && go mod download
 
 # Build binary
 RUN CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -o market-data-service .

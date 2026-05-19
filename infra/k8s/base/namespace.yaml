@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: aladdin-platform
+  labels:
+    name: aladdin-platform
+    environment: production
+    managed-by: kubernetes
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: aladdin-dev
+  labels:
+    name: aladdin-dev
+    environment: development
+    managed-by: kubernetes
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: aladdin-staging
+  labels:
+    name: aladdin-staging
+    environment: staging
+    managed-by: kubernetes

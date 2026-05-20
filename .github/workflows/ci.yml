@@ -77,13 +77,13 @@ jobs:
       uses: docker/build-push-action@v4
       with:
         context: ./services/${{ matrix.service }}
-        push: true
+        push: false
         tags: |
           ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:latest
           ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:${{ github.sha }}
 
   deploy-to-staging:
-    needs: build-docker-images
+    needs: false-docker-images
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     

@@ -88,15 +88,4 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
-    
-    - name: Setup kubectl
-      uses: azure/setup-kubectl@v3
-    
-    - name: Deploy to staging
-      run: |
-        echo "Deploying to staging environment"
-        # kubectl apply -f infra/k8s/base/
-        # kubectl apply -f infra/k8s/database/postgres/
-        # kubectl apply -f infra/k8s/messaging/kafka/
+      needs: build-docker-images

@@ -1,5 +1,4 @@
-module github.com/aladdin/market-data-service
-
+module main
 go 1.21
 
 require (

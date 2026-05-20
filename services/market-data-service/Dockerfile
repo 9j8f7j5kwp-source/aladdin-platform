@@ -9,6 +9,7 @@ RUN apk add --no-cache git gcc musl-dev
 
 # Copy source code
 COPY . .
+RUN go mod download
 # Build binary
 RUN CGO_ENABLED=1 GOOS=linux go build -a -installsuffix cgo -o market-data-service .
 
